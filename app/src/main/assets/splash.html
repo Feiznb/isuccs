@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>LEMON</title>
+<style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{
+            width:100vw;
+            height:100vh;
+            background:#050508;
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            overflow:hidden;
+            position:relative;
+        }
+        canvas{
+            position:absolute;
+            top:0;
+            left:0;
+        }
+        .glow-layer{
+            position:absolute;
+            width:100%;
+            height:100%;
+            pointer-events:none;
+            background:radial-gradient(ellipse at center, rgba(200,255,0,0.03) 0%, transparent 70%);
+            animation:pulse 3s ease-in-out infinite;
+        }
+        @keyframes pulse{
+            0%,100%{opacity:0.3;transform:scale(1)}
+            50%{opacity:0.6;transform:scale(1.1)}
+        }
+</style>
+  </head>
+  <body>
+    <div class="glow-layer"></div>
+    <canvas id="canvas"></canvas>
+<script>
+    (function(){
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let W, H;
+        let particles = [];
+        let textParticles = [];
+        let phase = 'gather'; // gather -> hold -> scatter
+        let phaseTime = 0;
+        const GATHER_DURATION = 1800;
+        const HOLD_DURATION = 800;
+        const SCATTER_DURATION = 1200;
+        const TOTAL_DURATION = GATHER_DURATION + HOLD_DURATION + SCATTER_DURATION;
+
+        function resize(){
+            W = canvas.width = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+            initTextParticles();
+        }
+
+        function initTextParticles(){
+            textParticles = [];
+            ctx.font = 'bold ' + Math.min(W * 0.25, 180) + 'px "Arial Black", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#fff';
+            ctx.fillText('LEMON', W/2, H/2);
+
+            const imageData = ctx.getImageData(0, 0, W, H).data;
+            const gap = 4;
+            
+            for(let y = 0; y < H; y += gap){
+                for(let x = 0; x < W; x += gap){
+                    const i = (y * W + x) * 4;
+                    if(imageData[i + 3] > 128){
+                        textParticles.push({x, y});
+                    }
+                }
+            }
+            ctx.clearRect(0, 0, W, H);
+            initParticles();
+        }
+
+        function initParticles(){
+            particles = [];
+            const count = textParticles.length;
+            
+            for(let i = 0; i < count; i++){
+                const tp = textParticles[i];
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 200 + Math.random() * 400;
+                
+                particles.push({
+                    x: tp.x + Math.cos(angle) * dist,
+                    y: tp.y + Math.sin(angle) * dist,
+                    targetX: tp.x,
+                    targetY: tp.y,
+                    originX: tp.x,
+                    originY: tp.y,
+                    vx: 0,
+                    vy: 0,
+                    size: 2 + Math.random() * 2,
+                    hue: 60 + Math.random() * 20,
+                    brightness: 50 + Math.random() * 30,
+                    delay: Math.random() * 0.4,
+                    trail: []
+                });
+            }
+        }
+
+        function easeOutExpo(t){
+            return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+        }
+
+        function easeInExpo(t){
+            return t === 0 ? 0 : Math.pow(2, 10 * t - 10);
+        }
+
+        function update(dt){
+            phaseTime += dt;
+            const progress = Math.min(phaseTime / TOTAL_DURATION, 1);
+
+            if(phaseTime < GATHER_DURATION){
+                phase = 'gather';
+            } else if(phaseTime < GATHER_DURATION + HOLD_DURATION){
+                phase = 'hold';
+            } else {
+                phase = 'scatter';
+            }
+
+            for(let p of particles){
+                if(phase === 'gather'){
+                    const t = Math.max(0, (progress - p.delay * 0.3) / (0.7 - p.delay * 0.3));
+                    const e = easeOutExpo(Math.min(t, 1));
+                    p.x += (p.targetX - p.x) * e * 0.15;
+                    p.y += (p.targetY - p.y) * e * 0.15;
+                } else if(phase === 'hold'){
+                    const wobble = Math.sin(phaseTime * 0.01 + p.targetX * 0.01) * 1.5;
+                    p.x += (p.targetX + wobble - p.x) * 0.1;
+                    p.y += (p.targetY - p.y) * 0.1;
+                } else {
+                    const scatterProgress = (phaseTime - GATHER_DURATION - HOLD_DURATION) / SCATTER_DURATION;
+                    const e = easeInExpo(scatterProgress);
+                    if(!p.scattered){
+                        const angle = Math.atan2(p.y - H/2, p.x - W/2) + (Math.random() - 0.5) * 0.5;
+                        const speed = 15 + Math.random() * 25;
+                        p.vx = Math.cos(angle) * speed;
+                        p.vy = Math.sin(angle) * speed;
+                        p.scattered = true;
+                    }
+                    p.x += p.vx * (1 + e * 2);
+                    p.y += p.vy * (1 + e * 2);
+                    p.vy += 0.3;
+                    p.vx *= 0.99;
+                }
+
+                if(phase === 'gather' || phase === 'hold'){
+                    p.trail.push({x: p.x, y: p.y, alpha: 1});
+                    if(p.trail.length > 8) p.trail.shift();
+                }
+                for(let t of p.trail){
+                    t.alpha *= 0.85;
+                }
+            }
+        }
+
+        function draw(){
+            ctx.clearRect(0, 0, W, H);
+
+            // 背景光晕
+            if(phase === 'hold' || phase === 'gather'){
+                const glowIntensity = phase === 'hold' ? 0.15 : 0.08;
+                const gradient = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.5);
+                gradient.addColorStop(0, `rgba(180, 220, 0, ${glowIntensity})`);
+                gradient.addColorStop(0.5, `rgba(100, 150, 0, ${glowIntensity * 0.3})`);
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            // 绘制粒子
+            for(let p of particles){
+                // 轨迹
+                for(let i = 0; i < p.trail.length; i++){
+                    const t = p.trail[i];
+                    const alpha = t.alpha * 0.3;
+                    if(alpha > 0.01){
+                        ctx.beginPath();
+                        ctx.arc(t.x, t.y, p.size * 0.5, 0, Math.PI * 2);
+                        ctx.fillStyle = `hsla(${p.hue}, 100%, ${p.brightness}%, ${alpha})`;
+                        ctx.fill();
+                    }
+                }
+
+                // 主粒子
+                let alpha = 1;
+                if(phase === 'scatter'){
+                    const scatterProgress = (phaseTime - GATHER_DURATION - HOLD_DURATION) / SCATTER_DURATION;
+                    alpha = 1 - easeInExpo(scatterProgress);
+                }
+                
+                if(alpha > 0.01){
+                    // 光晕
+                    const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 4);
+                    glow.addColorStop(0, `hsla(${p.hue}, 100%, 70%, ${alpha * 0.6})`);
+                    glow.addColorStop(0.4, `hsla(${p.hue}, 100%, 50%, ${alpha * 0.2})`);
+                    glow.addColorStop(1, 'transparent');
+                    ctx.fillStyle = glow;
+                    ctx.fillRect(p.x - p.size * 4, p.y - p.size * 4, p.size * 8, p.size * 8);
+
+                    // 核心
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${p.hue}, 100%, ${p.brightness + 20}%, ${alpha})`;
+                    ctx.fill();
+                }
+            }
+
+            // 中心闪光
+            if(phase === 'gather' && phaseTime > GATHER_DURATION * 0.7){
+                const flashProgress = (phaseTime - GATHER_DURATION * 0.7) / (GATHER_DURATION * 0.3);
+                const flashAlpha = Math.sin(flashProgress * Math.PI) * 0.8;
+                const flash = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, 150);
+                flash.addColorStop(0, `rgba(255, 255, 200, ${flashAlpha})`);
+                flash.addColorStop(0.3, `rgba(200, 255, 0, ${flashAlpha * 0.5})`);
+                flash.addColorStop(1, 'transparent');
+                ctx.fillStyle = flash;
+                ctx.fillRect(0, 0, W, H);
+            }
+        }
+
+        let lastTime = 0;
+        function loop(time){
+            const dt = time - lastTime;
+            lastTime = time;
+
+            update(dt);
+            draw();
+
+            if(phaseTime < TOTAL_DURATION){
+                requestAnimationFrame(loop);
+            }
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+        requestAnimationFrame(loop);
+
+        // 保持原有回调
+        setTimeout(function(){
+            if(window.android && window.android.onAnimationFinished){
+                window.android.onAnimationFinished();
+            }
+        }, TOTAL_DURATION + 100);
+    })();
+</script>
+  </body>
+</html>
+
